@@ -35,7 +35,7 @@ def handle_order(text: str, sheets: SheetsService) -> str:
 
 def handle_order_list(sheets: SheetsService) -> str:
     try:
-        orders = sheets.get_orders()
+        orders = sheets.get_current_month_orders()
         if not orders:
             return "ยังไม่มีออเดอร์"
         lines = ["📋 รายการออเดอร์:"]
