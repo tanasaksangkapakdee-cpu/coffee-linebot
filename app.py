@@ -32,16 +32,7 @@ sheets = SheetsService()
 
 @app.route("/", methods=["GET"])
 def health():
-    return "Custom Caff Bot is running!"
-
-
-@app.route("/test-sheets", methods=["GET"])
-def test_sheets():
-    try:
-        ws_names = [ws.title for ws in sheets._get_spreadsheet().worksheets()]
-        return {"status": "ok", "worksheets": ws_names}
-    except Exception as e:
-        return {"status": "error", "message": repr(e), "trace": traceback.format_exc()}
+    return "Custom Caff Bot is running! coffee"
 
 
 @app.route("/webhook", methods=["POST"])
@@ -58,26 +49,18 @@ def webhook():
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_text(event):
     text = event.message.text.strip()
-    app.logger.info(f"Text received: {repr(text)}")
     reply = None
-    try:
-        if _is_order(text):
-            reply = handle_order(text, sheets)
-        elif _is_expense(text):
-            reply = handle_expense(text, sheets)
-        elif _is_order_list(text):
-            reply = handle_order_list(sheets)
-        elif _is_expense_report(text):
-            reply = _expense_report(sheets)
-        elif _is_help(text):
-            reply = _help_message()
-        else:
-            reply = _help_message()
-    except Exception as e:
-        app.logger.error(f"handle_text error: {traceback.format_exc()}")
-        reply = f"เกิดข้อผิดพลาด: {str(e)}"
+    if _is_order(text):
+        reply = handle_order(text, sheets)
+    elif _is_expense(text):
+        reply = handle_expense(text, sheets)
+    elif _is_order_list(text):
+        reply = handle_order_list(sheets)
+    elif _is_expense_report(text):
+        reply = _expense_report(sheets)
+    elif _is_help(text):
+        reply = _help_message()
     if reply:
-        app.logger.info(f"Reply: {reply[:80]}")
         _reply(event.reply_token, reply)
 
 
@@ -87,8 +70,7 @@ def handle_image(event):
         from linebot.v3.messaging import MessagingApiBlob
         with ApiClient(configuration) as api_client:
             blob_api = MessagingApiBlob(api_client)
-            content = blob_api.get_message_content(message_id=event.message.id)
-            image_bytes = content
+            image_bytes = blob_api.get_message_content(message_id=event.message.id)
             reply = handle_expense_image(image_bytes, sheets)
     except Exception as e:
         app.logger.error(f"handle_image error: {traceback.format_exc()}")
@@ -97,43 +79,35 @@ def handle_image(event):
         _reply(event.reply_token, reply)
 
 
-# ========= Keywords (ภาษาไทย + ภาษาอังกฤษ) =========
-
-ORDER_KEYWORDS   = ["สั่ง", "order", "สั่งซื้อ", "จดออเดอร์"]
-EXPENSE_KEYWORDS = ["จ่าย", "expense", "ค่าใช้จ่าย", "บันทึกรายจ่าย", "รายจ่าย"]
-LIST_KEYWORDS    = ["รายการ", "ดูออเดอร์", "list order", "ออเดอร์เดือนนี้", "ออเดอร์ทั้งหมด"]
+ORDER_PREFIXES   = ["สั่ง", "สั่งซื้อ", "จดออเดอร์", "order"]
+EXPENSE_PREFIXES = ["จ่าย", "รายจ่าย", "บันทึกรายจ่าย", "ค่าใช้จ่าย", "expense"]
+LIST_KEYWORDS    = ["รายการ", "ดูออเดอร์", "list order", "ออเดอร์เดือนนี้"]
 REPORT_KEYWORDS  = ["สุป", "สรุป", "ดูรายจ่าย", "report", "summary", "รายจ่ายเดือนนี้"]
 HELP_KEYWORDS    = ["help", "ช่วย", "คำสั่ง", "วิธีใช้", "เมนู"]
 
 
 def _is_order(text):
-    t = text.lower()
-    return any(t.startswith(kw) or t == kw for kw in ORDER_KEYWORDS)
+    return any(text.startswith(kw) for kw in ORDER_PREFIXES)
 
 def _is_expense(text):
-    t = text.lower()
-    return any(t.startswith(kw) or t == kw for kw in EXPENSE_KEYWORDS)
+    return any(text.startswith(kw) for kw in EXPENSE_PREFIXES)
 
 def _is_order_list(text):
-    t = text.strip().lower()
-    return any(kw in t for kw in LIST_KEYWORDS)
+    return any(kw in text for kw in LIST_KEYWORDS)
 
 def _is_expense_report(text):
-    t = text.strip().lower()
-    return any(kw in t for kw in REPORT_KEYWORDS)
+    return any(kw in text for kw in REPORT_KEYWORDS)
 
 def _is_help(text):
-    t = text.strip().lower()
-    return any(kw in t for kw in HELP_KEYWORDS)
+    return any(kw in text for kw in HELP_KEYWORDS)
 
 
 def _reply(reply_token, text):
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
-        line_bot_api.reply_message(ReplyMessageRequest(
-            reply_token=reply_token,
-            messages=[TextMessage(text=text)]
-        ))
+        line_bot_api.reply_message(
+            ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=text)])
+        )
 
 
 def _expense_report(sheets):
