@@ -2,7 +2,7 @@ flask==3.0.3
 line-bot-sdk==3.11.0
 gspread==6.1.2
 google-auth==2.29.0
+google-api-python-client==2.131.0
 pytesseract==0.3.13
 Pillow==10.3.0
 gunicorn==22.0.0
-google-api-python-client==2.131.0
