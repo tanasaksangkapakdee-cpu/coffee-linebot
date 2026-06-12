@@ -5,6 +5,7 @@ Custom Caff LINE Chatbot
 
 import os
 import logging
+import traceback
 from flask import Flask, request, abort, jsonify
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
@@ -46,8 +47,9 @@ def test_sheets():
         ws_names = [ws.title for ws in sp.worksheets()]
         return jsonify({"status": "ok", "worksheets": ws_names})
     except Exception as e:
-        logger.error(f"test-sheets error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        tb = traceback.format_exc()
+        logger.error(f"test-sheets traceback:\n{tb}")
+        return jsonify({"status": "error", "message": repr(e), "traceback": tb}), 500
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -60,7 +62,7 @@ def webhook():
         logger.error("InvalidSignatureError - check LINE_CHANNEL_SECRET")
         abort(400)
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"Webhook error: {traceback.format_exc()}")
         abort(500)
     return "OK"
 
@@ -83,8 +85,9 @@ def handle_text(event):
         else:
             reply = "ไม่เข้าใจคำสั่ง พิมพ์ help เพื่อดูคำสั่งทั้งหมด"
     except Exception as e:
-        logger.error(f"handle_text error: {e}")
-        reply = f"เกิดข้อผิดพลาด: {str(e)}"
+        tb = traceback.format_exc()
+        logger.error(f"handle_text error:\n{tb}")
+        reply = f"เกิดข้อผิดพลาด: {repr(e)}"
     logger.info(f"Reply: {reply}")
     if reply:
         _reply(event.reply_token, reply)
@@ -98,8 +101,8 @@ def handle_image(event):
             image_bytes = resp.read()
             reply = handle_expense_image(image_bytes, sheets)
         except Exception as e:
-            logger.error(f"handle_image error: {e}")
-            reply = f"อ่านรูปไม่ได้: {str(e)}"
+            logger.error(f"handle_image error: {traceback.format_exc()}")
+            reply = f"อ่านรูปไม่ได้: {repr(e)}"
     if reply:
         _reply(event.reply_token, reply)
 
@@ -123,7 +126,7 @@ def _reply(reply_token, text):
                 ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=text)])
             )
     except Exception as e:
-        logger.error(f"Reply error: {e}")
+        logger.error(f"Reply error: {traceback.format_exc()}")
 
 def _expense_report(sheets):
     rows = sheets.get_current_month_expenses()
