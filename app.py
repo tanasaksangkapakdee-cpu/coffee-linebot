@@ -15,10 +15,13 @@ from linebot.v3.messaging import (
 from linebot.v3.webhooks import (
     MessageEvent, TextMessageContent, ImageMessageContent
 )
+from datetime import datetime, timezone, timedelta
 
 from handlers.order_handler import handle_order, handle_order_list
-from handlers.expense_handler import handle_expense, handle_expense_image
+from handlers.expense_handler import handle_expense, _save_image_to_drive
 from services.sheets_service import SheetsService
+
+TZ_BANGKOK = timezone(timedelta(hours=7))
 
 app = Flask(__name__)
 
@@ -28,6 +31,9 @@ LINE_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
 configuration = Configuration(access_token=LINE_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_SECRET)
 sheets = SheetsService()
+
+# เก็บรูปชั่วคราวรอ user พิมข้อความ {user_id: drive_url}
+pending_images = {}
 
 
 @app.route("/", methods=["GET"])
@@ -49,34 +55,63 @@ def webhook():
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_text(event):
     text = event.message.text.strip()
+    user_id = event.source.user_id
     reply = None
+
     if _is_order(text):
         reply = handle_order(text, sheets)
     elif _is_expense(text):
-        reply = handle_expense(text, sheets)
+        img_url = pending_images.pop(user_id, None)
+        reply = handle_expense(text, sheets, image_url=img_url)
     elif _is_order_list(text):
         reply = handle_order_list(sheets)
     elif _is_expense_report(text):
         reply = _expense_report(sheets)
     elif _is_help(text):
         reply = _help_message()
+
     if reply:
         _reply(event.reply_token, reply)
 
 
 @handler.add(MessageEvent, message=ImageMessageContent)
 def handle_image(event):
+    user_id = event.source.user_id
     try:
         from linebot.v3.messaging import MessagingApiBlob
         with ApiClient(configuration) as api_client:
             blob_api = MessagingApiBlob(api_client)
-            image_bytes = blob_api.get_message_content(message_id=event.message.id)
-            reply = handle_expense_image(image_bytes, sheets)
+            content = blob_api.get_message_content(message_id=event.message.id)
+            if hasattr(content, 'read'):
+                image_bytes = content.read()
+            elif hasattr(content, 'data'):
+                image_bytes = content.data
+            else:
+                image_bytes = bytes(content)
+
+        date_str = datetime.now(TZ_BANGKOK).strftime("%Y-%m-%d %H:%M")
+        filename = f"receipt_{date_str.replace(':', '-').replace(' ', '_')}.jpg"
+        drive_url = _save_image_to_drive(image_bytes, filename)
+
+        if drive_url:
+            pending_images[user_id] = drive_url
+            reply = (
+                "✅ รับรูปแล้ว บันทึก Drive สำเร็จ\n\n"
+                "พิมพ์รายการและจำนวนเงินครับ เช่น:\n"
+                "จ่าย 3500 ค่าเมล็ดกาแฟ"
+            )
+        else:
+            pending_images[user_id] = ""
+            reply = (
+                "✅ รับรูปแล้ว (Drive บันทึกไม่ได้)\n\n"
+                "พิมพ์รายการและจำนวนเงินครับ เช่น:\n"
+                "จ่าย 3500 ค่าเมล็ดกาแฟ"
+            )
     except Exception as e:
         app.logger.error(f"handle_image error: {traceback.format_exc()}")
         reply = f"อ่านรูปไม่ได้: {str(e)}"
-    if reply:
-        _reply(event.reply_token, reply)
+
+    _reply(event.reply_token, reply)
 
 
 ORDER_PREFIXES   = ["สั่ง", "สั่งซื้อ", "จดออเดอร์", "order"]
@@ -134,11 +169,12 @@ def _expense_report(sheets):
 def _help_message():
     return (
         "🟦 คำสั่งบอท Custom Caff:\n"
-        "สั่ง <ชื่อ> <จำนวน> – บันทึกออเดอร์เมล็ดกาแฟ\n"
-        "จ่าย <จำนวน> บาท <รายการ> – บันทึกรายจ่าย\n"
+        "สั่ง <ชื่อ> <จำนวน> – บันทึกออเดอร์\n"
+        "จ่าย <จำนวน> <รายการ> – บันทึกรายจ่าย\n"
         "รายการ – ดูออเดอร์เดือนนี้\n"
-        "สุป – ดูรายจ่ายเดือนนี้\n"
-        "ส่งรูป – บันทึกรายจ่ายจากสลิป/ใบเสร็จ"
+        "สุป – ดูรายจ่ายเดือนนี้\n\n"
+        "📎 ส่งรูปสลิปก่อน บอทจะถาม\n"
+        "แล้วพิมพ์: จ่าย 3500 ค่าเมล็ดกาแฟ"
     )
 
 
