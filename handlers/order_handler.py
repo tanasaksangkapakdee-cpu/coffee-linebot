@@ -22,7 +22,13 @@ def handle_order(text: str, sheets: SheetsService) -> str:
         return "ไม่เข้าใจออเดอร์ ลองพิมพ์แบบนี้:\n  สั่ง Ethiopia 1kg"
     try:
         row_num = sheets.add_order(parsed)
-        return f"บันทึกออเดอร์แล้ว (แถว {row_num})"
+                customer = f"คุณ{parsed['customer']}" if parsed['customer'] else "-"
+                return (
+                                f"✅ บันทึกออเดอร์แล้ว (แถว {row_num}) 📦\n"
+                                f" สินค้า: {parsed['product']} ⚖️\n"
+                                f" จำนวน: {parsed['quantity']} 👤\n"
+                                f" ชื่อ: {customer} 📅 วันที่: {parsed['date']}"
+                )
     except Exception as e:
         return f"บันทึกไม่สำเร็จ: {str(e)}"
 
