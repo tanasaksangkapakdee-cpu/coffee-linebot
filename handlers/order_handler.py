@@ -4,9 +4,10 @@ Order Handler — จดออเดอร์เมล็ดกาแฟ
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from services.sheets_service import SheetsService
 
+TZ_BANGKOK = timezone(timedelta(hours=7))
 
 KNOWN_BEANS = [
     "ethiopia", "kenya", "colombia", "brazil", "guatemala",
@@ -37,10 +38,10 @@ def handle_order_list(sheets: SheetsService) -> str:
     try:
         orders = sheets.get_current_month_orders()
         if not orders:
-            return "ยังไม่มีออเดอร์"
-        lines = ["📋 รายการออเดอร์:"]
+            return "ยังไม่มีออเดอร์เดือนนี้"
+        lines = ["📋 รายการออเดอร์เดือนนี้:"]
         for o in orders[-10:]:
-            lines.append(f"• {o.get('date','')} | {o.get('product','')} {o.get('quantity','')} | {o.get('customer','')}")
+            lines.append(f"• {o.get('วันที่','')} | {o.get('สินค้า','')} {o.get('จำนวน','')} | {o.get('ชื่อลูกค้า','-')}")
         return "\n".join(lines)
     except Exception as e:
         return f"ดึงข้อมูลไม่สำเร็จ: {str(e)}"
@@ -74,7 +75,7 @@ def _parse_order(text: str) -> dict:
                 product = bean.title()
                 break
 
-    date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    date_str = datetime.now(TZ_BANGKOK).strftime("%Y-%m-%d %H:%M")
 
     return {
         "product": product,
