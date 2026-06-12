@@ -4,9 +4,8 @@ Custom Caff LINE Chatbot
 """
 
 import os
-import logging
 import traceback
-from flask import Flask, request, abort, jsonify
+from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
@@ -21,55 +20,45 @@ from handlers.order_handler import handle_order, handle_order_list
 from handlers.expense_handler import handle_expense, handle_expense_image
 from services.sheets_service import SheetsService
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 app = Flask(__name__)
 
 LINE_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 LINE_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
 
-logger.info(f"LINE_ACCESS_TOKEN loaded: {bool(LINE_ACCESS_TOKEN)}")
-logger.info(f"LINE_SECRET loaded: {bool(LINE_SECRET)}")
-
 configuration = Configuration(access_token=LINE_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_SECRET)
 sheets = SheetsService()
 
+
 @app.route("/", methods=["GET"])
 def health():
-    return "Custom Caff Bot is running! coffee"
+    return "Custom Caff Bot is running!"
+
 
 @app.route("/test-sheets", methods=["GET"])
 def test_sheets():
     try:
-        sp = sheets._get_spreadsheet()
-        ws_names = [ws.title for ws in sp.worksheets()]
-        return jsonify({"status": "ok", "worksheets": ws_names})
+        ws_names = [ws.title for ws in sheets._get_spreadsheet().worksheets()]
+        return {"status": "ok", "worksheets": ws_names}
     except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"test-sheets traceback:\n{tb}")
-        return jsonify({"status": "error", "message": repr(e), "traceback": tb}), 500
+        return {"status": "error", "message": repr(e), "trace": traceback.format_exc()}
+
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
-    logger.info(f"Webhook received, body length: {len(body)}")
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
-        logger.error("InvalidSignatureError - check LINE_CHANNEL_SECRET")
         abort(400)
-    except Exception as e:
-        logger.error(f"Webhook error: {traceback.format_exc()}")
-        abort(500)
     return "OK"
+
 
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_text(event):
     text = event.message.text.strip()
-    logger.info(f"Text received: {text!r}")
+    app.logger.info(f"Text received: {repr(text)}")
     reply = None
     try:
         if _is_order(text):
@@ -83,67 +72,101 @@ def handle_text(event):
         elif _is_help(text):
             reply = _help_message()
         else:
-            reply = "ไม่เข้าใจคำสั่ง พิมพ์ help เพื่อดูคำสั่งทั้งหมด"
+            reply = _help_message()
     except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"handle_text error:\n{tb}")
-        reply = f"เกิดข้อผิดพลาด: {repr(e)}"
-    logger.info(f"Reply: {reply}")
+        app.logger.error(f"handle_text error: {traceback.format_exc()}")
+        reply = f"เกิดข้อผิดพลาด: {str(e)}"
     if reply:
+        app.logger.info(f"Reply: {reply[:80]}")
         _reply(event.reply_token, reply)
+
 
 @handler.add(MessageEvent, message=ImageMessageContent)
 def handle_image(event):
-    with ApiClient(configuration) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        try:
-            resp = line_bot_api.get_message_content(event.message.id)
-            image_bytes = resp.read()
+    try:
+        from linebot.v3.messaging import MessagingApiBlob
+        with ApiClient(configuration) as api_client:
+            blob_api = MessagingApiBlob(api_client)
+            content = blob_api.get_message_content(message_id=event.message.id)
+            image_bytes = content
             reply = handle_expense_image(image_bytes, sheets)
-        except Exception as e:
-            logger.error(f"handle_image error: {traceback.format_exc()}")
-            reply = f"อ่านรูปไม่ได้: {repr(e)}"
+    except Exception as e:
+        app.logger.error(f"handle_image error: {traceback.format_exc()}")
+        reply = f"อ่านรูปไม่ได้: {str(e)}"
     if reply:
         _reply(event.reply_token, reply)
 
-ORDER_KEYWORDS = ["สั่ง", "ออเดอร์", "order", "จอง"]
-EXPENSE_KEYWORDS = ["จ่าย", "ซื้อ", "ค่า", "expense", "buy", "pay"]
-LIST_KEYWORDS = ["รายการ", "ดูออเดอร์", "list order", "show orders"]
-REPORT_KEYWORDS = ["รายงาน", "สรุป", "report", "summary"]
-HELP_KEYWORDS = ["help", "ช่วยเหลือ", "วิธีใช้", "คำสั่ง", "commands"]
 
-def _is_order(text): return any(kw in text for kw in ORDER_KEYWORDS)
-def _is_expense(text): return any(kw in text for kw in EXPENSE_KEYWORDS)
-def _is_order_list(text): return any(kw in text for kw in LIST_KEYWORDS)
-def _is_expense_report(text): return any(kw in text for kw in REPORT_KEYWORDS)
-def _is_help(text): return any(kw in text for kw in HELP_KEYWORDS)
+# ========= Keywords (ภาษาไทย + ภาษาอังกฤษ) =========
+
+ORDER_KEYWORDS   = ["สั่ง", "order", "สั่งซื้อ", "จดออเดอร์"]
+EXPENSE_KEYWORDS = ["จ่าย", "expense", "ค่าใช้จ่าย", "บันทึกรายจ่าย", "รายจ่าย"]
+LIST_KEYWORDS    = ["รายการ", "ดูออเดอร์", "list order", "ออเดอร์เดือนนี้", "ออเดอร์ทั้งหมด"]
+REPORT_KEYWORDS  = ["สุป", "สรุป", "ดูรายจ่าย", "report", "summary", "รายจ่ายเดือนนี้"]
+HELP_KEYWORDS    = ["help", "ช่วย", "คำสั่ง", "วิธีใช้", "เมนู"]
+
+
+def _is_order(text):
+    t = text.lower()
+    return any(t.startswith(kw) or t == kw for kw in ORDER_KEYWORDS)
+
+def _is_expense(text):
+    t = text.lower()
+    return any(t.startswith(kw) or t == kw for kw in EXPENSE_KEYWORDS)
+
+def _is_order_list(text):
+    t = text.strip().lower()
+    return any(kw in t for kw in LIST_KEYWORDS)
+
+def _is_expense_report(text):
+    t = text.strip().lower()
+    return any(kw in t for kw in REPORT_KEYWORDS)
+
+def _is_help(text):
+    t = text.strip().lower()
+    return any(kw in t for kw in HELP_KEYWORDS)
+
 
 def _reply(reply_token, text):
-    try:
-        with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            line_bot_api.reply_message(
-                ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=text)])
-            )
-    except Exception as e:
-        logger.error(f"Reply error: {traceback.format_exc()}")
+    with ApiClient(configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        line_bot_api.reply_message(ReplyMessageRequest(
+            reply_token=reply_token,
+            messages=[TextMessage(text=text)]
+        ))
+
 
 def _expense_report(sheets):
-    rows = sheets.get_current_month_expenses()
-    if not rows:
-        return "ไม่มีรายจ่ายเดือนนี้"
-    total = sum(float(str(r.get("amount", 0)).replace(",", "")) for r in rows)
-    return f"รายจ่ายเดือนนี้รวม: {total:,.0f} บาท"
+    try:
+        rows = sheets.get_current_month_expenses()
+        if not rows:
+            return "📊 รายจ่ายเดือนนี้: ยังไม่มีรายการ"
+        total = 0
+        lines = ["📊 สรุปรายจ่ายเดือนนี้:"]
+        for r in rows[-10:]:
+            amt_raw = str(r.get("จำนวนเงิน (บาท)", 0)).replace(",", "")
+            try:
+                amt = float(amt_raw)
+                total += amt
+                lines.append(f"• {r.get('รายการ', '-')} — {amt:,.0f} บาท")
+            except ValueError:
+                pass
+        lines.append(f"\n💰 รวม: {total:,.0f} บาท")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"ดึงข้อมูลไม่สำเร็จ: {str(e)}"
+
 
 def _help_message():
     return (
-        "📋 คำสั่งบอท Custom Caff:\n"
-        "สั่ง <ชื่อ> <จำนวน> - บันทึกออเดอร์เมล็ดกาแฟ\n"
-        "จ่าย <จำนวน> บาท <รายการ> - บันทึกรายจ่าย\n"
-        "รายการ - ดูออเดอร์เดือนนี้\n"
-        "สรุป - ดูรายจ่ายเดือนนี้\n"
-        "ส่งรูปใบเสร็จ - บันทึกรายจ่ายจากใบเสร็จ"
+        "🟦 คำสั่งบอท Custom Caff:\n"
+        "สั่ง <ชื่อ> <จำนวน> – บันทึกออเดอร์เมล็ดกาแฟ\n"
+        "จ่าย <จำนวน> บาท <รายการ> – บันทึกรายจ่าย\n"
+        "รายการ – ดูออเดอร์เดือนนี้\n"
+        "สุป – ดูรายจ่ายเดือนนี้\n"
+        "ส่งรูป – บันทึกรายจ่ายจากสลิป/ใบเสร็จ"
     )
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
