@@ -7,16 +7,17 @@ import re
 import io
 import os
 import json
-import base64
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from services.sheets_service import SheetsService
 from services.ocr_service import extract_text_from_image, parse_receipt_amount
 
+TZ_BANGKOK = timezone(timedelta(hours=7))
+
 GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
-DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")  # optional: folder to save receipts
+DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")
 
 
 def _get_drive_service():
@@ -38,7 +39,6 @@ def _save_image_to_drive(image_bytes: bytes, filename: str) -> str:
         media = MediaIoBaseUpload(io.BytesIO(image_bytes), mimetype="image/jpeg")
         f = service.files().create(body=meta, media_body=media, fields="id").execute()
         file_id = f.get("id", "")
-        # Make publicly viewable
         service.permissions().create(
             fileId=file_id,
             body={"type": "anyone", "role": "reader"},
@@ -74,10 +74,9 @@ def handle_expense_image(image_bytes: bytes, sheets: SheetsService) -> str:
         if amount is None:
             return f"อ่านสลิปได้ แต่หาจำนวนเงินไม่เจอ\nข้อความ: {raw_text[:300]}"
 
-        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        date_str = datetime.now(TZ_BANGKOK).strftime("%Y-%m-%d %H:%M")
         filename = f"receipt_{date_str.replace(':', '-').replace(' ', '_')}.jpg"
 
-        # Save image to Google Drive
         drive_url = _save_image_to_drive(image_bytes, filename)
 
         parsed = {
@@ -109,7 +108,6 @@ def _parse_expense_text(text: str) -> dict:
     amount = None
     description = text.strip()
 
-    # Extract amount (number + optional บาท)
     m = re.search(r"(\d+(?:[,.]\d+)?)\s*(?:บาท|baht|฿)?", text, re.IGNORECASE)
     if m:
         raw = m.group(1).replace(",", "")
@@ -119,7 +117,7 @@ def _parse_expense_text(text: str) -> dict:
             pass
         description = (text[:m.start()] + text[m.end():]).strip().strip("ค่า").strip() or "รายจ่าย"
 
-    date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    date_str = datetime.now(TZ_BANGKOK).strftime("%Y-%m-%d %H:%M")
     return {
         "description": description or "รายจ่าย",
         "amount": amount,
