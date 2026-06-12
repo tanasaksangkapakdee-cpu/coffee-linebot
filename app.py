@@ -5,7 +5,7 @@ Custom Caff LINE Chatbot
 
 import os
 import logging
-from flask import Flask, request, abort
+from flask import Flask, request, abort, jsonify
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
@@ -37,7 +37,17 @@ sheets = SheetsService()
 
 @app.route("/", methods=["GET"])
 def health():
-    return "Custom Caff Bot is running! ☕"
+    return "Custom Caff Bot is running! coffee"
+
+@app.route("/test-sheets", methods=["GET"])
+def test_sheets():
+    try:
+        sp = sheets._get_spreadsheet()
+        ws_names = [ws.title for ws in sp.worksheets()]
+        return jsonify({"status": "ok", "worksheets": ws_names})
+    except Exception as e:
+        logger.error(f"test-sheets error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -75,6 +85,7 @@ def handle_text(event):
     except Exception as e:
         logger.error(f"handle_text error: {e}")
         reply = f"เกิดข้อผิดพลาด: {str(e)}"
+    logger.info(f"Reply: {reply}")
     if reply:
         _reply(event.reply_token, reply)
 
@@ -92,7 +103,6 @@ def handle_image(event):
     if reply:
         _reply(event.reply_token, reply)
 
-# Keywords ทั้งภาษาไทยและอังกฤษ
 ORDER_KEYWORDS = ["สั่ง", "ออเดอร์", "order", "จอง"]
 EXPENSE_KEYWORDS = ["จ่าย", "ซื้อ", "ค่า", "expense", "buy", "pay"]
 LIST_KEYWORDS = ["รายการ", "ดูออเดอร์", "list order", "show orders"]
@@ -112,7 +122,6 @@ def _reply(reply_token, text):
             line_bot_api.reply_message(
                 ReplyMessageRequest(reply_token=reply_token, messages=[TextMessage(text=text)])
             )
-            logger.info(f"Reply sent: {text[:50]}")
     except Exception as e:
         logger.error(f"Reply error: {e}")
 
