@@ -1,6 +1,6 @@
 """
 Expense Handler - จดรายจ่าย
-รองรับ: ข้อความอิสระ + รูปสลิป/ใบเสร็จ/กระดาษลายมือ
+รองรับ: ข้อความอิสระ + รูปสลิป/ใบเสร็จ
 """
 
 import re
@@ -12,7 +12,6 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from services.sheets_service import SheetsService
-from services.ocr_service import extract_text_from_image, parse_receipt_amount
 
 TZ_BANGKOK = timezone(timedelta(hours=7))
 
@@ -36,7 +35,7 @@ def _save_image_to_drive(image_bytes: bytes, filename: str) -> str:
         meta = {"name": filename}
         if DRIVE_FOLDER_ID:
             meta["parents"] = [DRIVE_FOLDER_ID]
-        media = MediaIoBaseUpload(io.BytesIO(image_bytes), mimetype="image/jpeg")
+        media = MediaIoBaseUpload(io.BytesIO(bytes(image_bytes)), mimetype="image/jpeg")
         f = service.files().create(body=meta, media_body=media, fields="id").execute()
         file_id = f.get("id", "")
         service.permissions().create(
@@ -44,60 +43,30 @@ def _save_image_to_drive(image_bytes: bytes, filename: str) -> str:
             body={"type": "anyone", "role": "reader"},
         ).execute()
         return f"https://drive.google.com/file/d/{file_id}/view"
-    except Exception:
+    except Exception as e:
         return ""
 
 
-def handle_expense(text: str, sheets: SheetsService) -> str:
+def handle_expense(text: str, sheets: SheetsService, image_url: str = None) -> str:
     parsed = _parse_expense_text(text)
     if parsed["amount"] is None:
-        return "ไม่พบจำนวนเงิน ลองพิมพ์แบบนี้:\n  จ่ายค่าเมล็ดกาแฟ 3500 บาท"
+        return "ไม่พบจำนวนเงิน ลองพิมพ์แบบนี้:\n  จ่าย 3500 ค่าเมล็ดกาแฟ"
     try:
+        if image_url:
+            parsed["source"] = image_url
         row_num = sheets.add_expense(parsed)
         amount_fmt = f"{parsed['amount']:,.0f}" if isinstance(parsed['amount'], (int, float)) else str(parsed['amount'])
-        return (
+        reply = (
             f"✅ บันทึกรายจ่ายแล้ว (แถว {row_num})\n"
             f"📝 รายการ: {parsed['description']}\n"
             f"💰 จำนวน: {amount_fmt} บาท\n"
             f"📅 วันที่: {parsed['date']}"
         )
-    except Exception as e:
-        return f"บันทึกไม่สำเร็จ: {str(e)}"
-
-
-def handle_expense_image(image_bytes: bytes, sheets: SheetsService) -> str:
-    try:
-        raw_text = extract_text_from_image(image_bytes)
-        if not raw_text:
-            return "อ่านสลิปไม่ออก ลองถ่ายใหม่"
-        amount, description = parse_receipt_amount(raw_text)
-        if amount is None:
-            return f"อ่านสลิปได้ แต่หาจำนวนเงินไม่เจอ\nข้อความ: {raw_text[:300]}"
-
-        date_str = datetime.now(TZ_BANGKOK).strftime("%Y-%m-%d %H:%M")
-        filename = f"receipt_{date_str.replace(':', '-').replace(' ', '_')}.jpg"
-
-        drive_url = _save_image_to_drive(image_bytes, filename)
-
-        parsed = {
-            "description": description or "สลิปใบเสร็จ",
-            "amount": amount,
-            "date": date_str,
-            "source": drive_url or "สลิป/รูปภาพ",
-        }
-        row_num = sheets.add_expense(parsed)
-        amount_fmt = f"{amount:,.0f}" if isinstance(amount, (int, float)) else str(amount)
-        reply = (
-            f"✅ บันทึกรายจ่ายแล้ว (แถว {row_num})\n"
-            f"📝 รายการ: {parsed['description']}\n"
-            f"💰 จำนวน: {amount_fmt} บาท\n"
-            f"📅 วันที่: {date_str}"
-        )
-        if drive_url:
-            reply += f"\n🖼️ รูปภาพ: {drive_url}"
+        if image_url:
+            reply += f"\n🖼️ รูปภาพ: {image_url}"
         return reply
     except Exception as e:
-        return f"บันทึกสลิปไม่สำเร็จ: {str(e)}"
+        return f"บันทึกไม่สำเร็จ: {str(e)}"
 
 
 def _parse_expense_text(text: str) -> dict:
